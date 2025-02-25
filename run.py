@@ -5,7 +5,7 @@ import json
 
 # Read user information from input.json
 try:
-    with open('input.json', 'r') as f:
+    with open("testing/input.json", "r") as f:
         user_info = json.load(f)
 except FileNotFoundError:
     print("Error: input.json file not found")
@@ -15,7 +15,7 @@ except json.JSONDecodeError:
     exit(1)
 
 # Get all image files from the dl_images directory
-image_dir = "dl_images"
+image_dir = "testing/dl_images"
 image_files = [f for f in os.listdir(image_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
 
 # Process each image
