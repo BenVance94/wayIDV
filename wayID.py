@@ -325,7 +325,7 @@ class wayID:
             "resolution_score": max(0, 100 - ((width * height) / (1000 * 1000) * 100)),
             "color_transition": min(100, self._calculate_color_transitions(hsv)),
             "rainbow_effect": min(100, (np.std(hsv[:, :, 0]) / 75) * 100),
-            "blur_score": max(0, 100 - min(100, cv2.Laplacian(gray, cv2.CV_64F).var())),
+            "blur_score": self._calculate_blur_score(gray),
             "saturation_score": min(100, (np.mean(hsv[:, :, 1]) / 255) * 150),
             "digital_artifacts": min(100, (np.std(ycrcb[::8, ::8, :]) / np.std(ycrcb)) * 50),
             "microprint_score": self._analyze_microprint(gray)
@@ -904,29 +904,43 @@ class wayID:
         _, binary = cv2.threshold(denoised, 127, 255, cv2.THRESH_BINARY)
         return binary
 
-    def _calculate_color_transitions(self, hsv):
-        '''
-        Calculate unnatural color transitions in HSV space
-        '''
-        # Calculate gradients in both directions
-        gradient_x = cv2.Sobel(hsv[:,:,0], cv2.CV_64F, 1, 0, ksize=3)
-        gradient_y = cv2.Sobel(hsv[:,:,0], cv2.CV_64F, 0, 1, ksize=3)
+    def _calculate_blur_score(self, gray):
+        """
+        Calculate a blur score where:
+        - 0-100 scale (0 = likely genuine, 100 = likely fraudulent)
+        - Mid-range blur (like real IDs) scores lowest (best)
+        - Too sharp or too blurry scores higher (worse)
+        """
+        blur_var = cv2.Laplacian(gray, cv2.CV_64F).var()
         
-        # Calculate magnitude and direction
-        gradient_magnitude = np.sqrt(gradient_x**2 + gradient_y**2)
-        gradient_direction = np.arctan2(gradient_y, gradient_x)
+        # Define the acceptable range for blur
+        PERFECT_BLUR = 1000  # Center of the acceptable range
+        MIN_ACCEPTABLE = 100  # Lower bound of acceptable range
+        MAX_ACCEPTABLE = 5000  # Upper bound of acceptable range
         
-        # Look for suspicious patterns
-        direction_hist = np.histogram(gradient_direction, bins=36)[0]
-        direction_peaks = np.sum(direction_hist > np.mean(direction_hist) * 1.5)
+        # Debug information
+        print(f"\nBlur analysis for {os.path.basename(self.image_path)}:")
+        print(f"Raw blur variance: {blur_var:.2f}")
+        print(f"Acceptable range: {MIN_ACCEPTABLE} - {MAX_ACCEPTABLE}")
+        print(f"Optimal blur: {PERFECT_BLUR}")
+
+        # Calculate score (inverted from previous version)
+        if blur_var < MIN_ACCEPTABLE:
+            # Too blurry - bad
+            ratio = blur_var / MIN_ACCEPTABLE
+            score = max(0, min(100, 100 - (ratio * 50)))  # Bound between 0-100
+        elif blur_var > MAX_ACCEPTABLE:
+            # Too sharp - bad
+            excess_sharpness = (blur_var - MAX_ACCEPTABLE) / MAX_ACCEPTABLE
+            score = max(0, min(100, 50 + (excess_sharpness * 25)))  # Bound between 0-100
+        else:
+            # Within acceptable range - calculate score based on distance from perfect
+            distance_from_perfect = abs(blur_var - PERFECT_BLUR) / (MAX_ACCEPTABLE - MIN_ACCEPTABLE)
+            score = max(0, min(100, distance_from_perfect * 50))  # Bound between 0-100
+
+        print(f"Final blur score: {score:.2f}/100 (lower is better)")
         
-        # Calculate mean gradient magnitude
-        mean_magnitude = np.mean(gradient_magnitude)
-        
-        # Combine metrics (higher score = more suspicious transitions)
-        transition_score = (mean_magnitude * 0.7 + direction_peaks * 0.3)
-        
-        return min(100, transition_score * 2)
+        return score
 
     def _check_official_colors(self, hsv):
         '''
@@ -1189,3 +1203,30 @@ class wayID:
         estimated_quality = qualities[np.argmin(size_diffs)]
         
         return estimated_quality
+
+    def _calculate_color_transitions(self, hsv_image):
+        """
+        Calculate the number of significant color transitions in the HSV image.
+        This can help detect fake IDs that might have unusual color patterns.
+        
+        Args:
+            hsv_image: Image in HSV color space
+            
+        Returns:
+            int: Number of significant color transitions found
+        """
+        # Extract the hue channel
+        hue = hsv_image[:, :, 0]
+        
+        # Calculate horizontal and vertical gradients
+        gradient_x = cv2.Sobel(hue, cv2.CV_64F, 1, 0, ksize=3)
+        gradient_y = cv2.Sobel(hue, cv2.CV_64F, 0, 1, ksize=3)
+        
+        # Calculate gradient magnitude
+        gradient_magnitude = np.sqrt(gradient_x**2 + gradient_y**2)
+        
+        # Count significant transitions (adjust threshold as needed)
+        threshold = 30
+        transitions = np.sum(gradient_magnitude > threshold)
+        
+        return int(transitions)

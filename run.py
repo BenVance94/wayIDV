@@ -2,6 +2,7 @@ print("Starting...")
 from wayID import wayID
 import os
 import json
+import cv2
 
 # Read user information from input.json
 try:
